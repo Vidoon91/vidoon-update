@@ -345,19 +345,19 @@
     {
       "url": "https://www.youtube.com/shorts/CUCQ6wmodQs",
       "title": "This Is Why Everyone Dreams of New York  #newyorkcity #travel #usa",
-      "status": "未下载",
-      "progress": 0,
-      "result": "",
-      "file_path": "",
+      "status": "完成",
+      "progress": 100,
+      "result": "下载成功",
+      "file_path": "C:/Users/Administrator/Desktop/新建文件夹\\This Is Why Everyone Dreams of New York ✨ #newyorkcity #travel #usa-CUCQ6wmodQs.mp4",
       "selected": false
     },
     {
       "url": "https://www.youtube.com/shorts/1ImzxUWlLCs",
       "title": "New York City Walking tour 4k , Central Park",
-      "status": "未下载",
-      "progress": 0,
-      "result": "",
-      "file_path": "",
+      "status": "完成",
+      "progress": 100,
+      "result": "下载成功",
+      "file_path": "C:/Users/Administrator/Desktop/新建文件夹\\New York City Walking tour 4k , Central Park 🇺🇸-1ImzxUWlLCs.mp4",
       "selected": false
     },
     {
@@ -18678,11 +18678,11 @@
   ],
   "input_url": "https://www.youtube.com/@NewYorkCityUsa11/shorts",
   "platform": "YouTube",
-  "extract_time": "2026-07-31 10:38:30",
+  "extract_time": "2026-08-26 11:37:44",
   "download_stats": {
     "total": 2075,
-    "completed": 48,
+    "completed": 50,
     "failed": 0,
-    "pending": 2027
+    "pending": 2025
   }
 }

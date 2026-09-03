@@ -1,6 +1,6 @@
 {
   "language": "zh",
-  "download_path": "C:/Users/Administrator/Desktop/VideoDown",
+  "download_path": "C:/Users/Administrator/Desktop/新建文件夹",
   "max_threads": 3,
   "auto_update": true,
   "speed_limit": "无限制",
@@ -56,7 +56,7 @@
   "batch_threads_tiktok": 1,
   "batch_threads_instagram": 1,
   "enable_deno": true,
-  "deno_timeout": 11,
+  "deno_timeout": 17,
   "youtube_visitor_data": "",
   "youtube_po_token": "",
   "youtube_po_token_context": "web.gvs",
@@ -65,7 +65,7 @@
   "youtube_format_fallback": true,
   "youtube_user_agent": "",
   "youtube_use_browser_user_agent": true,
-  "last_youtube_preview_file": "C:/Users/Administrator/Desktop/VideoDown\\The Most Beautiful Streets of New York City Manhattan 4K #newyorkcity #usa-b-f3X6nVw-0.mp4",
-  "last_preview_file": "C:/Users/Administrator/Desktop/VideoDown\\The Most Beautiful Streets of New York City Manhattan 4K #newyorkcity #usa-b-f3X6nVw-0.mp4",
+  "last_youtube_preview_file": "C:/Users/Administrator/Desktop/新建文件夹\\This Is Why Everyone Dreams of New York ✨ #newyorkcity #travel #usa-CUCQ6wmodQs.mp4",
+  "last_preview_file": "C:/Users/Administrator/Desktop/新建文件夹\\This Is Why Everyone Dreams of New York ✨ #newyorkcity #travel #usa-CUCQ6wmodQs.mp4",
   "cookie_twitter": "twitter_cookies.txt"
 }

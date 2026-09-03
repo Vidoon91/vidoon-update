@@ -34,7 +34,7 @@ if errorlevel 1 (
 )
 
 set "missing_files="
-for %%F in ("%MAIN_FILE%" "%ICON_FILE%" "yt-dlp.exe" "ffmpeg.exe" "ffprobe.exe" "deno.exe") do (
+for %%F in ("%MAIN_FILE%" "%ICON_FILE%" "yt-dlp.exe" "ffmpeg.exe" "deno.exe") do (
     if not exist "%%~F" (
         set "missing_files=!missing_files! %%~F"
     )
@@ -53,7 +53,7 @@ if errorlevel 1 (
     goto :fail
 )
 
-for %%F in (app_config.py auto_update.py about.py shouquan.py setting.py piliang.py videodown.py rizhi.py core\__init__.py core\download_types.py core\download_utils.py core\download_router.py platforms\__init__.py platforms\youtube_download.py platforms\instagram_download.py platforms\tiktok_download.py platforms\twitter_download.py) do (
+for %%F in (app_config.py auto_update.py about.py shouquan.py setting.py piliang.py videodown.py rizhi.py core\__init__.py core\download_types.py core\download_utils.py core\download_router.py core\youtube_pot_provider.py platforms\__init__.py platforms\youtube_download.py platforms\instagram_download.py platforms\tiktok_download.py platforms\twitter_download.py) do (
     if exist "%%F" (
         python -m py_compile "%%F"
         if errorlevel 1 (
@@ -61,6 +61,13 @@ for %%F in (app_config.py auto_update.py about.py shouquan.py setting.py piliang
             goto :fail
         )
     )
+)
+
+echo Prepare YouTube PO Token Provider...
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\prepare_bgutil_provider.ps1" -ProjectRoot "%CD%"
+if errorlevel 1 (
+    echo [ERROR] Failed to prepare YouTube PO Token Provider.
+    goto :fail
 )
 
 echo [2/6] Clean old build output...
@@ -90,6 +97,7 @@ python -m PyInstaller ^
   --hidden-import=core.download_router ^
   --hidden-import=core.download_types ^
   --hidden-import=core.download_utils ^
+  --hidden-import=core.youtube_pot_provider ^
   --hidden-import=platforms.youtube_download ^
   --hidden-import=platforms.instagram_download ^
   --hidden-import=platforms.tiktok_download ^
@@ -107,7 +115,7 @@ if not exist "%DIST_APP_DIR%\%APP_NAME%.exe" (
 )
 
 echo [4/6] Copy runtime files...
-for %%F in ("yt-dlp.exe" "ffmpeg.exe" "ffprobe.exe" "deno.exe" "config.json" "app_settings.json" "version.json" "icon.ico" "logo.png") do (
+for %%F in ("yt-dlp.exe" "ffmpeg.exe" "deno.exe" "config.json" "app_settings.json" "version.json" "icon.ico" "logo.png") do (
     if exist "%%~F" (
         copy /Y "%%~F" "%DIST_APP_DIR%\" >nul
         if errorlevel 1 (
@@ -117,6 +125,22 @@ for %%F in ("yt-dlp.exe" "ffmpeg.exe" "ffprobe.exe" "deno.exe" "config.json" "ap
     )
 )
 echo [INFO] Cookie files will be imported by user separately.
+
+if exist "yt-dlp-plugins" (
+    xcopy /E /I /Y "yt-dlp-plugins" "%DIST_APP_DIR%\yt-dlp-plugins" >nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to copy yt-dlp plugins.
+        goto :fail
+    )
+)
+if exist "vendor\bgutil-provider" (
+    xcopy /E /I /Y "vendor\bgutil-provider" "%DIST_APP_DIR%\vendor\bgutil-provider" >nul
+    if errorlevel 1 (
+        echo [ERROR] Failed to copy BgUtils Provider runtime.
+        goto :fail
+    )
+)
+if exist "THIRD_PARTY_NOTICES.md" copy /Y "THIRD_PARTY_NOTICES.md" "%DIST_APP_DIR%\" >nul
 
 if exist "%DIST_APP_DIR%\config.json" (
     powershell -NoProfile -ExecutionPolicy Bypass -Command "$path = Join-Path (Get-Location) '%DIST_APP_DIR%\\config.json'; $data = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json; @('download_path','last_preview_file','last_youtube_preview_file','cookies_file','proxy_list') | ForEach-Object { $data.PSObject.Properties.Remove($_) }; $utf8 = New-Object System.Text.UTF8Encoding($false); [IO.File]::WriteAllText($path, ($data | ConvertTo-Json -Depth 10), $utf8)"
@@ -136,7 +160,7 @@ if exist "%DIST_APP_DIR%\version.json" (
 
 echo [5/6] Verify output...
 set "required_ok=true"
-for %%F in ("%DIST_APP_DIR%\%APP_NAME%.exe" "%DIST_APP_DIR%\yt-dlp.exe" "%DIST_APP_DIR%\ffmpeg.exe" "%DIST_APP_DIR%\ffprobe.exe" "%DIST_APP_DIR%\deno.exe") do (
+for %%F in ("%DIST_APP_DIR%\%APP_NAME%.exe" "%DIST_APP_DIR%\yt-dlp.exe" "%DIST_APP_DIR%\ffmpeg.exe" "%DIST_APP_DIR%\deno.exe" "%DIST_APP_DIR%\yt-dlp-plugins\bgutil-ytdlp-pot-provider.zip" "%DIST_APP_DIR%\vendor\bgutil-provider\node.exe" "%DIST_APP_DIR%\vendor\bgutil-provider\server\build\main.js") do (
     if not exist "%%~F" (
         echo [WARN] Missing file: %%~F
         set "required_ok=false"

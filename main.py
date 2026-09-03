@@ -1096,20 +1096,17 @@ class VideoDownloader(QMainWindow):
         if not os.path.exists(self.ffmpeg_path):
             missing_tools.append("ffmpeg.exe")
         
-        if not os.path.exists(self.ffprobe_path):
-            missing_tools.append("ffprobe.exe")
-        
         #
         if self.enable_deno:
-            self.log_handler.log("Deno.js解析引擎已启动就绪")
+            self.log_handler.log("视频解析运行环境已就绪")
         else:
-            self.log_handler.log("工具丢失: deno.exe 未找到，Deno 解析功能不可用")
+            self.log_handler.log("视频解析运行环境未就绪：未找到 deno.exe")
         
         if missing_tools:
             tool_list = "\n".join(missing_tools)
             self.log_handler.log(f"工具丢失:\n{tool_list}")
             self.log_handler.log("yt-dlp 下载地址: https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe")
-            self.log_handler.log("ffmpeg / ffprobe 下载地址: https://www.gyan.dev/ffmpeg/builds/")
+            self.log_handler.log("ffmpeg 下载地址: https://www.gyan.dev/ffmpeg/builds/")
         else:
             self.log_handler.log("所有必要工具已就绪")
         
@@ -1757,7 +1754,7 @@ class VideoDownloader(QMainWindow):
         top_layout.addSpacing(6)
 
         #
-        self.btn_website = QPushButton("官网订阅")
+        self.btn_website = QPushButton("官网教程")
         self.btn_website.setFocusPolicy(Qt.NoFocus)
         self.btn_website.setObjectName("topNavButton")
         self.btn_website.setFixedHeight(27)
@@ -1943,8 +1940,9 @@ class VideoDownloader(QMainWindow):
 
         self._update_sidebar_display()
         #
-        self._select_nav_button_by_page(0)
-        self.pages.setCurrentIndex(0)
+        if self._ensure_page_loaded(7):
+            self.pages.setCurrentIndex(7)
+            self._select_nav_button_by_page(7)
 
     def _page_loading_placeholder(self, title):
         """Small placeholder used until a heavy page is opened for the first time."""
@@ -2199,7 +2197,7 @@ class VideoDownloader(QMainWindow):
                 button.style().unpolish(button)
                 button.style().polish(button)
         else:
-            self.btn_website.setText("官网订阅")
+            self.btn_website.setText("官网教程")
             self.btn_website.setToolTip("")
             self._update_login_button_text()
 
@@ -2301,7 +2299,7 @@ class VideoDownloader(QMainWindow):
 
     def _open_resolved_website(self, result):
         self.btn_website.setEnabled(True)
-        self.btn_website.setText("官网订阅")
+        self.btn_website.setText("官网教程")
 
         url = result.get("url", "") if result.get("success") else ""
         if not re.match(r"^https?://", url, re.IGNORECASE):
@@ -2309,7 +2307,7 @@ class VideoDownloader(QMainWindow):
 
         try:
             webbrowser.open(url)
-            self.log_handler.log(f"打开官网订阅：{url}")
+            self.log_handler.log(f"打开官网教程：{url}")
         except Exception as exc:
             self.log_handler.log(f"打开官网失败：{exc}")
 
@@ -3431,7 +3429,6 @@ def run_package_self_test():
         "Vidoon2026.exe",
         YT_DLP_NAME,
         FFMPEG_NAME,
-        FFPROBE_NAME,
         DENO_NAME,
         "config.json",
         "app_settings.json",

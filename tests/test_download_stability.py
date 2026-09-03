@@ -13,6 +13,7 @@ from about import AboutPage
 from main import VideoDownloader
 from core.download_types import DownloadRuntime, build_result
 from core.download_utils import (
+    detect_tool_update_notices,
     extract_output_file_paths,
     extract_output_ids,
     get_quality_label,
@@ -695,6 +696,173 @@ class StrategyTests(unittest.TestCase):
             self.assertTrue(result["success"])
             self.assertEqual(cookie_calls, [True])
 
+    def test_youtube_403_uses_provider_before_720p_hls_fallback(self):
+        runtime = DownloadRuntime("yt-dlp", "ffmpeg", tempfile.gettempdir())
+        downloader = YouTubeDownloader(runtime)
+        http_403 = build_result(
+            success=False,
+            platform="YouTube",
+            strategy_used="PlatformNoCookie",
+            error_source="YOUTUBE_HTTP_403",
+        )
+        hls_success = build_result(
+            success=True,
+            platform="YouTube",
+            strategy_used="YouTubeHlsFallback",
+        )
+        fallback_calls = []
+        provider_calls = []
+        downloader._download_platform_without_cookie = lambda *args: http_403
+        downloader._download_with_pot_provider = (
+            lambda *args, **kwargs: provider_calls.append(kwargs) or None
+        )
+        downloader._download_hls_fallback = (
+            lambda *args, **kwargs: fallback_calls.append(kwargs) or hls_success
+        )
+        http_403["selected_format"] = {"resolution": "1920x1080"}
+
+        result = downloader.execute_download(
+            {"normalized_url": "https://youtube.com/watch?v=1", "is_shorts": False},
+            lambda message: None,
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(provider_calls, [{"quality_axis": "height"}])
+        self.assertEqual(
+            fallback_calls,
+            [{"quality_axis": "height", "minimum_quality": 720}],
+        )
+
+    def test_youtube_403_returns_provider_success_without_hls(self):
+        runtime = DownloadRuntime("yt-dlp", "ffmpeg", tempfile.gettempdir())
+        downloader = YouTubeDownloader(runtime)
+        http_403 = build_result(
+            success=False,
+            platform="YouTube",
+            strategy_used="PlatformNoCookie",
+            error_source="YOUTUBE_HTTP_403",
+            selected_format={"resolution": "1920x1080"},
+        )
+        provider_success = build_result(
+            success=True,
+            platform="YouTube",
+            strategy_used="YouTubePoToken",
+        )
+        downloader._download_platform_without_cookie = lambda *args: http_403
+        downloader._download_with_pot_provider = lambda *args, **kwargs: provider_success
+        downloader._download_hls_fallback = lambda *args, **kwargs: self.fail(
+            "HLS should not run after Provider succeeds"
+        )
+
+        result = downloader.execute_download(
+            {"normalized_url": "https://youtube.com/watch?v=1", "is_shorts": False},
+            lambda message: None,
+        )
+
+        self.assertTrue(result["success"])
+        self.assertEqual(result["strategy_used"], "YouTubePoToken")
+
+    def test_youtube_fallback_commands_change_protocol_or_stream_type(self):
+        runtime = DownloadRuntime(
+            "yt-dlp",
+            "ffmpeg",
+            tempfile.gettempdir(),
+            enable_deno=True,
+            deno_path="deno",
+        )
+        downloader = YouTubeDownloader(runtime)
+
+        standard = downloader._build_youtube_command(
+            "https://youtube.com/watch?v=1",
+            False,
+            use_cookie=False,
+        )
+        hls = downloader._build_youtube_command(
+            "https://youtube.com/watch?v=1",
+            False,
+            use_cookie=False,
+            fallback_mode="hls",
+            minimum_quality=720,
+        )
+        pot = downloader._build_youtube_command(
+            "https://youtube.com/watch?v=1",
+            False,
+            use_cookie=False,
+            fallback_mode="pot",
+            minimum_quality=720,
+            quality_axis="height",
+            provider_base_url="http://127.0.0.1:4416",
+        )
+        portrait_axis, portrait_quality = downloader._selected_quality_requirement(
+            {"resolution": "1080x1920"}
+        )
+
+        self.assertIn("--continue", standard)
+        self.assertIn("--no-plugin-dirs", standard)
+        self.assertNotIn("--no-plugin-dirs", pot)
+        self.assertNotIn("--no-continue", standard)
+        self.assertNotIn("--force-overwrites", standard)
+        self.assertNotEqual(standard[standard.index("-f") + 1], hls[hls.index("-f") + 1])
+        self.assertIn("protocol^=m3u8", hls[hls.index("-f") + 1])
+        self.assertIn("player_client=web_safari", hls[hls.index("--extractor-args") + 1])
+        self.assertIn("[height>=720]", pot[pot.index("-f") + 1])
+        self.assertIn("player_client=mweb", pot[pot.index("--extractor-args") + 1])
+        self.assertIn("--plugin-dirs", pot)
+        self.assertTrue(
+            any("youtubepot-bgutilhttp:base_url=" in value for value in pot)
+        )
+        self.assertEqual((portrait_axis, portrait_quality), ("width", 1080))
+
+    def test_youtube_fallback_never_selects_below_720p(self):
+        runtime = DownloadRuntime("yt-dlp", "ffmpeg", tempfile.gettempdir())
+        downloader = YouTubeDownloader(runtime)
+        hls = downloader._build_youtube_command(
+            "https://youtube.com/watch?v=1",
+            False,
+            use_cookie=False,
+            fallback_mode="hls",
+            minimum_quality=720,
+            quality_axis="height",
+        )
+
+        self.assertIn("[height>=720]", hls[hls.index("-f") + 1])
+        self.assertNotIn("height<=", hls[hls.index("-f") + 1])
+
+        standard = downloader._build_youtube_command(
+            "https://youtube.com/watch?v=1",
+            False,
+            use_cookie=False,
+        )
+        shorts = downloader._build_youtube_command(
+            "https://youtube.com/shorts/1",
+            True,
+            use_cookie=False,
+        )
+        self.assertTrue(standard[standard.index("-f") + 1].endswith("best[height>=720]"))
+        self.assertTrue(shorts[shorts.index("-f") + 1].endswith("best[width>=720]"))
+
+    def test_youtube_component_progress_never_moves_backwards(self):
+        progress_events = []
+        runtime = DownloadRuntime(
+            "yt-dlp",
+            "ffmpeg",
+            tempfile.gettempdir(),
+            progress_callback=lambda type_, data: progress_events.append((type_, data)),
+        )
+        downloader = YouTubeDownloader(runtime)
+
+        downloader._parse_progress(
+            "[download] 100.0% of 83.78MiB at 653.54KiB/s ETA 00:00"
+        )
+        downloader._parse_progress(
+            "[download] 33.5% of 2.98MiB at 879.18KiB/s ETA 00:02"
+        )
+
+        self.assertEqual(
+            [event[1]["percent"] for event in progress_events if event[0] == "progress"],
+            [100.0],
+        )
+
 
 class ErrorClassificationTests(unittest.TestCase):
     def test_precise_classification_avoids_broad_keywords(self):
@@ -704,6 +872,12 @@ class ErrorClassificationTests(unittest.TestCase):
         twitter = TwitterDownloader.__new__(TwitterDownloader)
 
         self.assertEqual(youtube.classify_error("general network metadata"), "UNKNOWN")
+        self.assertEqual(
+            youtube.classify_error(
+                "ERROR: unable to download video data: HTTP Error 403: Forbidden"
+            ),
+            "YOUTUBE_HTTP_403",
+        )
         self.assertEqual(tiktok.classify_error("curl: (35) TLS connect error"), "NETWORK_ERROR")
         self.assertEqual(
             instagram.classify_error("HTTP Error 429: Too Many Requests"),
@@ -845,6 +1019,23 @@ class ProgressLoggingTests(unittest.TestCase):
         maybe_log_download_progress(runtime, "Twitter", "PlatformNoCookie", progress)
 
         self.assertEqual(len(messages), 1)
+
+
+class ToolUpdateNoticeTests(unittest.TestCase):
+    def test_yt_dlp_outdated_warning_gets_chinese_notice_and_official_url(self):
+        notices = detect_tool_update_notices(
+            "WARNING: Your yt-dlp version (2026.03.17) is older than 90 days!"
+        )
+
+        self.assertEqual(len(notices), 1)
+        self.assertIn("检测到 yt-dlp 版本过旧或不兼容", notices[0])
+        self.assertIn("https://github.com/yt-dlp/yt-dlp/releases/latest", notices[0])
+
+    def test_normal_download_output_does_not_show_update_notice(self):
+        self.assertEqual(
+            detect_tool_update_notices("Downloading 1 format(s): 137+140"),
+            [],
+        )
 
 
 if __name__ == "__main__":

@@ -3,8 +3,8 @@ import random
 import re
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
-from setting import DenoResolver
-from core.download_types import DownloadRuntime, build_result
+from core.download_types import DownloadRuntime
+from core.youtube_pot_provider import get_youtube_pot_provider
 from core.download_utils import (
     DOWNLOAD_PROGRESS_TEMPLATE,
     build_output_file_print_template,
@@ -27,17 +27,15 @@ YOUTUBE_QUALITY_SELECTOR = (
     "bestvideo[height>=1440][ext=mp4]+bestaudio[ext=m4a]/"
     "bestvideo[height>=1080][ext=mp4]+bestaudio[ext=m4a]/"
     "bestvideo[height>=720][ext=mp4]+bestaudio[ext=m4a]/"
-    "best"
+    "best[height>=720]"
 )
 
-YOUTUBE_SHORTS_QUALITY_SELECTOR = YOUTUBE_QUALITY_SELECTOR
-
-YOUTUBE_FALLBACK_QUALITY_SELECTOR = (
-    "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/"
-    "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/"
-    "best[height<=1080][ext=mp4]/"
-    "best[height<=720]/"
-    "best"
+YOUTUBE_SHORTS_QUALITY_SELECTOR = (
+    "bestvideo[width>=2160][ext=mp4]+bestaudio[ext=m4a]/"
+    "bestvideo[width>=1440][ext=mp4]+bestaudio[ext=m4a]/"
+    "bestvideo[width>=1080][ext=mp4]+bestaudio[ext=m4a]/"
+    "bestvideo[width>=720][ext=mp4]+bestaudio[ext=m4a]/"
+    "best[width>=720]"
 )
 
 YOUTUBE_SORT_SELECTOR = "res,fps,br"
@@ -112,9 +110,9 @@ class YouTubeDownloader:
 
     def __init__(self, runtime: DownloadRuntime):
         self.runtime = runtime
-        self.deno_resolver = None
-        if runtime.enable_deno and runtime.deno_path and os.path.exists(runtime.deno_path):
-            self.deno_resolver = DenoResolver(runtime.deno_path, runtime.deno_timeout)
+        if runtime.youtube_pot_provider is None:
+            app_dir = os.path.dirname(os.path.abspath(runtime.yt_dlp_path))
+            runtime.youtube_pot_provider = get_youtube_pot_provider(app_dir)
 
     def normalize_url(self, url: str) -> dict:
         original_url = url.strip()
@@ -154,6 +152,7 @@ class YouTubeDownloader:
         error_text = (stderr_text or "").lower()
         patterns = [
             (["http error 429", "too many requests", "rate limit"], "NETWORK_RATE_LIMIT"),
+            (["http error 403", "403 forbidden"], "YOUTUBE_HTTP_403"),
             ([
                 "sign in to confirm you're not a bot",
                 "confirm youre not a bot",
@@ -194,14 +193,11 @@ class YouTubeDownloader:
     def should_use_cookie(self, error_source: str) -> bool:
         return error_source in {"AUTH_NEED_LOGIN", "CONTENT_AGE_RESTRICTED", "PRIVATE_VIDEO", "AUTH_BOT_CHECK"}
 
-    def should_use_deno(self, error_source: str) -> bool:
-        return error_source in {"EXTRACTOR_FAILED", "AUTH_BOT_CHECK", "UNKNOWN"}
-
     def should_use_advanced_auth(self, error_source: str) -> bool:
         return error_source in {"AUTH_BOT_CHECK", "AUTH_NEED_LOGIN", "EXTRACTOR_FAILED"}
 
     def should_use_format_fallback(self, error_source: str) -> bool:
-        return error_source in {"DOWNLOAD_RANGE_INVALID", "EXTRACTOR_FAILED", "UNKNOWN", "AUTH_BOT_CHECK"}
+        return error_source == "YOUTUBE_HTTP_403"
 
     def is_ip_risk_error(self, error_source: str) -> bool:
         return error_source in {
@@ -218,7 +214,8 @@ class YouTubeDownloader:
             "CONTENT_AGE_RESTRICTED": "该视频有年龄限制，请使用有效的 YouTube Cookie。",
             "PRIVATE_VIDEO": "该视频是私密视频，当前账号无权访问。",
             "AUTH_NEED_LOGIN": "这个 YouTube 视频需要登录后才能下载，请导入可用的 YouTube Cookie。",
-            "EXTRACTOR_FAILED": "YouTube 解析失败，可尝试更新 yt-dlp、配置 visitor_data/poToken，或启用 Deno。",
+            "YOUTUBE_HTTP_403": "YouTube 拒绝了当前媒体下载通道（HTTP 403），工具已自动尝试其他可用通道。",
+            "EXTRACTOR_FAILED": "YouTube 解析失败，请更新 yt-dlp 或稍后重试。",
         }
         return messages.get(error_source, "下载失败，请检查链接、网络或更新 yt-dlp。")
 
@@ -281,22 +278,32 @@ class YouTubeDownloader:
                 log_callback("策略3：自动增强机器人验证处理已关闭，跳过高级验证参数模式")
 
         if self.runtime.youtube_format_fallback and self.should_use_format_fallback(result["error_source"]):
-            result = self._download_format_fallback(normalized_url, log_callback, is_shorts)
-            if result["success"]:
-                return result
-            if self.is_ip_risk_error(result["error_source"]):
-                result["message"] = self._friendly_message(result["error_source"])
-                return result
-            if result["error_source"] in {"AUTH_COOKIE_INVALID", "NETWORK_ERROR"}:
-                result["message"] = self._friendly_message(result["error_source"])
-                return result
+            original_result = result
+            quality_axis, _original_quality = self._selected_quality_requirement(
+                result.get("selected_format")
+            )
+            quality_axis = quality_axis or ("width" if is_shorts else "height")
 
-        if self.should_use_deno(result["error_source"]) and self.deno_resolver:
-            result = self._download_with_deno(normalized_url, log_callback, is_shorts, url_info)
+            provider_result = self._download_with_pot_provider(
+                normalized_url,
+                log_callback,
+                is_shorts,
+                quality_axis=quality_axis,
+            )
+            if provider_result and provider_result["success"]:
+                return provider_result
+
+            result = self._download_hls_fallback(
+                normalized_url,
+                log_callback,
+                is_shorts,
+                quality_axis=quality_axis,
+                minimum_quality=720,
+            )
             if result["success"]:
                 return result
-            result["message"] = self._friendly_message(result.get("error_source", "UNKNOWN"))
-            return result
+            log_callback("未找到 720P 或以上的可用备用通道，停止下载，不再降低清晰度")
+            result = original_result
 
         result["message"] = self._friendly_message(result.get("error_source", "UNKNOWN"))
         return result
@@ -323,54 +330,88 @@ class YouTubeDownloader:
         cmd = self._build_youtube_command(url, is_shorts, use_cookie=True, use_advanced_auth=True)
         return self._run_strategy(cmd, url, log_callback, "YouTubeAdvancedAuth", cookie_used=True)
 
-    def _download_format_fallback(self, url: str, log_callback, is_shorts: bool) -> dict:
-        log_callback("策略4：降级格式重试...")
+    @staticmethod
+    def _selected_quality_requirement(selected_format: dict | None) -> tuple[str, int]:
+        resolution = str((selected_format or {}).get("resolution", "") or "").strip()
+        dimensions = re.fullmatch(r"(?P<width>\d{2,5})x(?P<height>\d{2,5})", resolution)
+        if dimensions:
+            width = int(dimensions.group("width"))
+            height = int(dimensions.group("height"))
+            return ("height", height) if width >= height else ("width", width)
+
+        progressive = re.search(r"(?<!\d)(?P<height>\d{3,4})p(?!\d)", resolution, re.IGNORECASE)
+        if progressive:
+            return "height", int(progressive.group("height"))
+        return "", 0
+
+    def _download_hls_fallback(
+        self,
+        url: str,
+        log_callback,
+        is_shorts: bool,
+        *,
+        quality_axis: str,
+        minimum_quality: int,
+    ) -> dict:
+        log_callback(
+            f"策略5：继续尝试不低于 {minimum_quality}P 的 HLS 备用通道..."
+        )
         cmd = self._build_youtube_command(
             url,
             is_shorts,
-            use_cookie=self._has_cookie_file(),
-            use_advanced_auth=self._has_cookie_file() and self._has_advanced_auth_params(),
-            fallback_format=True,
+            use_cookie=False,
+            fallback_mode="hls",
+            minimum_quality=minimum_quality,
+            quality_axis=quality_axis,
         )
         return self._run_strategy(
             cmd,
             url,
             log_callback,
-            "YouTubeFormatFallback",
-            cookie_used=self._has_cookie_file(),
+            "YouTubeHlsFallback",
+            cookie_used=False,
         )
 
-    def _download_with_deno(self, url: str, log_callback, is_shorts: bool, url_info: dict) -> dict:
-        log_callback("策略5：Deno 兜底解析...")
-        resolved = self.deno_resolver.resolve_url(url, log_callback)
-        if not resolved or not resolved.get("video_url"):
-            return build_result(
-                success=False,
-                platform=self.platform_name,
-                strategy_used="DenoFallback",
-                error_source="EXTRACTOR_FAILED",
-                message="Deno 解析失败",
-                deno_used=True,
-                normalized_url=url,
-                url_modified=url_info.get("url_modified", False),
-                modification_reason=url_info.get("modification_reason", ""),
-            )
+    def _download_with_pot_provider(
+        self,
+        url: str,
+        log_callback,
+        is_shorts: bool,
+        *,
+        quality_axis: str,
+    ) -> dict | None:
+        provider = self.runtime.youtube_pot_provider
+        if provider is None:
+            log_callback("策略4：本地 PO Token Provider 未配置，跳过验证通道")
+            return None
 
-        resolved_url = resolved["video_url"]
-        log_callback("Deno 解析成功，开始下载解析后的直链")
+        ready, reason = provider.ensure_ready(log_callback)
+        if not ready:
+            reason_messages = {
+                "provider_not_installed": "Provider 运行文件不完整，请重新执行打包准备",
+                "provider_start_failed": "Provider 进程启动失败",
+                "provider_exited": "Provider 启动后异常退出",
+                "provider_timeout": "Provider 启动超时",
+            }
+            log_callback(f"策略4：{reason_messages.get(reason, 'Provider 当前不可用')}，继续尝试 HLS 通道")
+            return None
+
+        log_callback("策略4：启用本地 PO Token Provider，重新请求 720P 或以上媒体通道...")
         cmd = self._build_youtube_command(
-            resolved_url,
+            url,
             is_shorts,
-            use_cookie=self._has_cookie_file(),
-            use_deno_url=True,
+            use_cookie=False,
+            fallback_mode="pot",
+            minimum_quality=720,
+            quality_axis=quality_axis,
+            provider_base_url=provider.base_url,
         )
         return self._run_strategy(
             cmd,
-            resolved_url,
+            url,
             log_callback,
-            "DenoFallback",
-            cookie_used=self._has_cookie_file(),
-            deno_used=True,
+            "YouTubePoToken",
+            cookie_used=False,
         )
 
     def _build_youtube_command(
@@ -381,15 +422,34 @@ class YouTubeDownloader:
         use_cookie: bool,
         use_deno_url: bool = False,
         use_advanced_auth: bool = False,
-        fallback_format: bool = False,
+        fallback_mode: str = "",
+        minimum_quality: int = 0,
+        quality_axis: str = "height",
+        provider_base_url: str = "",
     ) -> list[str]:
         cmd = self._build_base_command()
+        if fallback_mode != "pot":
+            # The portable BgUtils plugin probes its local server when loaded.
+            # Normal downloads do not need it; load it only for the 403 retry.
+            cmd.append("--no-plugin-dirs")
         cmd.extend(["--merge-output-format", "mp4", "--remux-video", "mp4"])
-        quality_selector = (
-            YOUTUBE_FALLBACK_QUALITY_SELECTOR
-            if fallback_format
-            else (YOUTUBE_SHORTS_QUALITY_SELECTOR if is_shorts else YOUTUBE_QUALITY_SELECTOR)
-        )
+        if fallback_mode == "hls":
+            axis = quality_axis if quality_axis in {"width", "height"} else "height"
+            quality_filter = f"[{axis}>={int(minimum_quality)}]" if minimum_quality else ""
+            quality_selector = (
+                f"best[protocol^=m3u8]{quality_filter}/"
+                f"bestvideo[protocol^=m3u8]{quality_filter}+bestaudio"
+            )
+        elif fallback_mode == "pot":
+            axis = quality_axis if quality_axis in {"width", "height"} else "height"
+            quality_filter = f"[{axis}>={max(720, int(minimum_quality or 720))}]"
+            quality_selector = (
+                f"bestvideo{quality_filter}[ext=mp4]+bestaudio[ext=m4a]/"
+                f"bestvideo{quality_filter}+bestaudio/"
+                f"best{quality_filter}"
+            )
+        else:
+            quality_selector = YOUTUBE_SHORTS_QUALITY_SELECTOR if is_shorts else YOUTUBE_QUALITY_SELECTOR
 
         cmd.extend(
             [
@@ -414,9 +474,31 @@ class YouTubeDownloader:
             ]
         )
 
-        extractor_args = self._build_extractor_args(is_shorts, use_deno_url, use_advanced_auth)
+        player_client = {
+            "hls": "web_safari",
+            "pot": "mweb",
+        }.get(fallback_mode, "")
+        extractor_args = self._build_extractor_args(
+            is_shorts,
+            use_deno_url,
+            use_advanced_auth,
+            player_client=player_client,
+        )
         if extractor_args:
             cmd.extend(["--extractor-args", extractor_args])
+
+        if fallback_mode == "pot" and provider_base_url:
+            plugin_dir = os.path.join(
+                os.path.dirname(os.path.abspath(self.runtime.yt_dlp_path)),
+                "yt-dlp-plugins",
+            )
+            cmd.extend(["--plugin-dirs", plugin_dir])
+            cmd.extend(
+                [
+                    "--extractor-args",
+                    f"youtubepot-bgutilhttp:base_url={provider_base_url}",
+                ]
+            )
 
         if use_cookie and self._has_cookie_file():
             cmd.extend(["--cookies", self.runtime.cookie_file])
@@ -424,14 +506,23 @@ class YouTubeDownloader:
         cmd.append(url)
         return cmd
 
-    def _build_extractor_args(self, is_shorts: bool, use_deno_url: bool, use_advanced_auth: bool) -> str:
+    def _build_extractor_args(
+        self,
+        is_shorts: bool,
+        use_deno_url: bool,
+        use_advanced_auth: bool,
+        *,
+        player_client: str = "",
+    ) -> str:
         if use_advanced_auth and (self.runtime.youtube_advanced_extractor_args or "").strip():
             return self.runtime.youtube_advanced_extractor_args.strip()
 
         segments = []
-        if use_deno_url or use_advanced_auth:
-            player_client = "web,android" if is_shorts else "web,android,ios"
+        if player_client:
             segments.append(f"player_client={player_client}")
+        elif use_deno_url or use_advanced_auth:
+            default_clients = "web,android" if is_shorts else "web,android,ios"
+            segments.append(f"player_client={default_clients}")
 
         if use_advanced_auth:
             visitor_data = (self.runtime.youtube_visitor_data or "").strip()
@@ -451,8 +542,7 @@ class YouTubeDownloader:
             self.runtime.yt_dlp_path,
             "--no-playlist",
             "--ignore-errors",
-            "--no-continue",
-            "--force-overwrites",
+            "--continue",
             "--newline",
             "--progress",
             "--progress-template",
@@ -518,6 +608,12 @@ class YouTubeDownloader:
         progress = parse_download_progress(line)
         if not progress:
             return
+
+        previous_percent = getattr(self.runtime, "_current_video_progress_percent", 0.0)
+        current_percent = float(progress.get("percent", 0.0) or 0.0)
+        if current_percent + 0.05 < previous_percent:
+            return
+        self.runtime._current_video_progress_percent = max(previous_percent, current_percent)
 
         if self.runtime.progress_callback:
             self.runtime.progress_callback("progress", progress)

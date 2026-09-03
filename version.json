@@ -1,13 +1,7 @@
 ﻿{
-<<<<<<< HEAD
     "version":  "5.8",
     "url":  "https://github.com/Vidoon91/Vidoon2026/releases/latest/download/Vidoon2026_latest.zip",
     "notes":  "2026.8.6 新版本",
-=======
-    "version":  "5.3",
-    "url":  "https://github.com/Vidoon91/vidoon-update/releases/download/latest/Vidoon2026_latest.zip",
-    "notes":  "2026.8.1 youtube tiktok 等主页批量提取下载功能更新，每个视频下载结果都有画质、大小显示",
->>>>>>> a4251ba4292b2252826a6d9334c6188cfc47d9d5
     "force":  false,
-    "sha256":  "a4998d1a0c3d98813a05d2b12478a40dbb9f3b7b47910fffbeaeb209114891c3"
+    "sha256":  "45e484586bd3b826497b883ec71e20eac07b602db06ba06029e438e3c5c2e07c"
 }

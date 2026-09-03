@@ -22,6 +22,9 @@ venv/
 *.zip
 *.7z
 
+# Generated third-party runtime; rebuild with scripts/prepare_bgutil_provider.ps1
+vendor/bgutil-provider/
+
 # 编辑器配置
 .vscode/
 .idea/

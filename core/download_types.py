@@ -23,6 +23,7 @@ class DownloadRuntime:
     youtube_format_fallback: bool = True
     youtube_user_agent: str = ""
     youtube_use_browser_user_agent: bool = True
+    youtube_pot_provider: Any = None
     write_thumbnail: bool = False
     log_callback: Callable[[str], None] | None = None
     speed_callback: Callable[[str], None] | None = None

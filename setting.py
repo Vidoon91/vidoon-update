@@ -11,7 +11,7 @@ import tempfile
 import webbrowser
 from datetime import datetime, timezone
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QComboBox,
@@ -22,7 +22,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
-    QProgressBar,
     QScrollArea,
     QSpinBox,
     QTextEdit,
@@ -458,17 +457,11 @@ Cookie 获取指南
 class SettingsPage(QWidget):
     """Download settings page."""
 
-    tool_update_status_signal = Signal(str, bool)
-    tool_update_buttons_signal = Signal(bool)
-
     def __init__(self, parent=None, log_handler=None, config=None):
         super().__init__(parent)
         self.parent = parent
         self.log_handler = log_handler
         self.config = config
-        self._tool_update_running = False
-        self.tool_update_status_signal.connect(self._set_tool_update_status)
-        self.tool_update_buttons_signal.connect(self._set_tool_update_buttons_enabled)
         self.init_ui()
         self.update_cache_info()
         self.check_cookie_status(log_results=False)
@@ -495,7 +488,6 @@ class SettingsPage(QWidget):
         self._build_download_group(content_layout)
         self._build_cookie_group(content_layout)
         self._build_deno_group(content_layout)
-        self._build_plugin_group(content_layout)
         self._build_cache_group(content_layout)
         content_layout.addStretch()
 
@@ -607,7 +599,7 @@ class SettingsPage(QWidget):
         group = QFrame()
         group.setObjectName("settingGroup")
         layout = QVBoxLayout(group)
-        layout.addWidget(UIComponents.create_label("Deno 解析设置", "font-weight: 700;"))
+        layout.addWidget(UIComponents.create_label("视频解析运行环境", "font-weight: 700;"))
 
         status_layout = QHBoxLayout()
         self.lbl_deno_status = UIComponents.create_label("", "font-weight: bold;")
@@ -616,7 +608,7 @@ class SettingsPage(QWidget):
         layout.addLayout(status_layout)
 
         path_layout = QHBoxLayout()
-        path_layout.addWidget(UIComponents.create_label("Deno.exe 路径:"))
+        path_layout.addWidget(UIComponents.create_label("运行文件（deno.exe）路径:"))
         self.deno_path_edit = QLineEdit()
         self.deno_path_edit.setText(self._root_tool_path("deno.exe"))
         path_layout.addWidget(self.deno_path_edit)
@@ -640,47 +632,16 @@ class SettingsPage(QWidget):
         self._update_deno_status_label()
         content_layout.addWidget(group)
 
-    def _build_plugin_group(self, content_layout):
-        group = QFrame()
-        group.setObjectName("settingGroup")
-        layout = QVBoxLayout(group)
-        layout.addWidget(UIComponents.create_label("插件更新", "font-weight: 700;"))
-        button_layout = QHBoxLayout()
-        self.btn_update_yt_dlp = UIComponents.create_button("更新 yt-dlp", 27, 100)
-        self.btn_update_yt_dlp.clicked.connect(self.update_yt_dlp)
-        button_layout.addWidget(self.btn_update_yt_dlp)
-        self.btn_update_ffmpeg = UIComponents.create_button("更新 ffmpeg", 27, 100)
-        self.btn_update_ffmpeg.clicked.connect(self.update_ffmpeg)
-        button_layout.addWidget(self.btn_update_ffmpeg)
-        self.btn_update_deno = UIComponents.create_button("更新 deno.exe", 27, 120)
-        self.btn_update_deno.clicked.connect(self.update_deno)
-        button_layout.addWidget(self.btn_update_deno)
-        button_layout.addStretch()
-        layout.addLayout(button_layout)
-        note = QLabel("Deno 解析状态会在每次启动时自动检查并写入运行日志；工具文件统一放在软件根目录。")
-        note.setWordWrap(True)
-        note.setStyleSheet("font-size: 11px; color: #9ca3af; padding: 5px;")
-        layout.addWidget(note)
-        content_layout.addWidget(group)
-
     def _build_cache_group(self, content_layout):
         group = QFrame()
         group.setObjectName("settingGroup")
         layout = QVBoxLayout(group)
-        layout.addWidget(UIComponents.create_label("缓存与工具状态", "font-weight: 700;"))
-        self.tools_status_label = QLabel("")
-        self.tools_status_label.setWordWrap(True)
-        layout.addWidget(self.tools_status_label)
-        self.cache_info_label = QLabel("")
-        self.cache_info_label.setWordWrap(True)
-        layout.addWidget(self.cache_info_label)
-        self.tool_update_status_label = QLabel("")
-        layout.addWidget(self.tool_update_status_label)
-        self.tool_update_progress = QProgressBar()
-        self.tool_update_progress.setRange(0, 100)
-        self.tool_update_progress.setValue(0)
-        layout.addWidget(self.tool_update_progress)
-
+        layout.addWidget(UIComponents.create_label("缓存清理", "font-weight: 700;"))
+        # Keep status collection available internally without showing it in settings.
+        self.tools_status_label = QLabel(group)
+        self.tools_status_label.setVisible(False)
+        self.cache_info_label = QLabel(group)
+        self.cache_info_label.setVisible(False)
         button_layout = QHBoxLayout()
         self.btn_clear_plugin_cache = UIComponents.create_button("清理插件缓存", 27, 120)
         self.btn_clear_plugin_cache.clicked.connect(self.clear_plugin_cache)
@@ -896,10 +857,10 @@ class SettingsPage(QWidget):
     def _update_deno_status_label(self):
         enabled = os.path.exists(self.deno_path_edit.text().strip())
         if enabled:
-            self.lbl_deno_status.setText("Deno 解析器已就绪，将自动参与兜底解析")
+            self.lbl_deno_status.setText("视频解析运行环境已就绪，将自动参与平台解析")
             self.lbl_deno_status.setStyleSheet("color: #10b981; font-weight: bold;")
         else:
-            self.lbl_deno_status.setText("Deno 解析器未就绪")
+            self.lbl_deno_status.setText("视频解析运行环境未就绪")
             self.lbl_deno_status.setStyleSheet("color: #ef4444; font-weight: bold;")
 
     def test_deno_function(self):
@@ -934,28 +895,6 @@ class SettingsPage(QWidget):
                 except OSError as exc:
                     self._log(f"删除文件失败 {path}: {exc}")
         return removed
-
-    def update_ffmpeg(self):
-        webbrowser.open("https://www.gyan.dev/ffmpeg/builds/")
-        self._log("已打开 ffmpeg 下载页面")
-
-    def update_deno(self):
-        webbrowser.open("https://github.com/denoland/deno/releases/latest")
-        self._log("已打开 deno.exe 下载页面")
-
-    def update_yt_dlp(self):
-        url = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
-        webbrowser.open(url)
-        self._log("已打开 yt-dlp 下载页面")
-
-    def _set_tool_update_status(self, text, done=False):
-        self.tool_update_status_label.setText(text)
-        if done:
-            self.tool_update_progress.setValue(100)
-
-    def _set_tool_update_buttons_enabled(self, enabled):
-        for button in (self.btn_update_yt_dlp, self.btn_update_ffmpeg, self.btn_update_deno):
-            button.setEnabled(enabled)
 
     def update_cache_info(self):
         def folder_stats(folder):

@@ -12,6 +12,12 @@ OUTPUT_FILE_LOG_PREFIX = "[VIDOON_OUTPUT]"
 OUTPUT_ID_LOG_PREFIX = "[VIDOON_OUTPUT_ID]"
 FINAL_VIDEO_EXTENSIONS = {".mp4", ".webm", ".mkv", ".mov", ".m4v"}
 TEMP_FILE_EXTENSIONS = {".part", ".ytdl", ".temp", ".tmp"}
+TOOL_UPDATE_URLS = {
+    "yt-dlp": "https://github.com/yt-dlp/yt-dlp/releases/latest",
+    "FFmpeg": "https://ffmpeg.org/download.html",
+    "Deno": "https://github.com/denoland/deno/releases/latest",
+    "BgUtils PO Token Provider": "https://github.com/Brainicism/bgutil-ytdlp-pot-provider/releases/latest",
+}
 DOWNLOAD_PROGRESS_TEMPLATE = (
     "[download] %(progress._percent_str)s of %(progress._total_bytes_str)s "
     "at %(progress._speed_str)s ETA %(progress._eta_str)s"
@@ -23,7 +29,9 @@ STRATEGY_LABELS = {
     "PlatformCookie": "平台专属 Cookie 下载",
     "PlatformBrowserCookie": "平台专属浏览器 Cookie 下载",
     "YouTubeAdvancedAuth": "YouTube Cookie + 高级验证参数",
+    "YouTubePoToken": "YouTube 本地 PO Token 验证通道",
     "YouTubeFormatFallback": "YouTube 降级格式重试",
+    "YouTubeHlsFallback": "YouTube HLS 备用通道",
     "DenoFallback": "Deno 解析兜底下载",
     "UNKNOWN": "未知下载策略",
 }
@@ -34,13 +42,16 @@ STRATEGY_LOG_NAMES = {
     "PlatformBrowserCookie": "策略2",
     "AdvancedAuth": "策略3",
     "YouTubeAdvancedAuth": "策略3",
+    "YouTubePoToken": "策略4",
     "FormatFallback": "策略4",
-    "YouTubeFormatFallback": "策略4",
+    "YouTubeFormatFallback": "策略5",
+    "YouTubeHlsFallback": "策略5",
     "DenoFallback": "策略5",
 }
 
 DEFAULT_ERROR_MESSAGES = {
     "NETWORK_RATE_LIMIT": "请求太频繁了，平台暂时限流了，请稍后再试。",
+    "YOUTUBE_HTTP_403": "YouTube 拒绝了当前媒体下载通道（HTTP 403）。",
     "DOWNLOAD_RANGE_INVALID": "本地残留下载文件和服务器返回范围不一致，请重新下载这条视频。",
     "AUTH_BOT_CHECK": "平台触发了机器人验证，当前账号或 IP 环境被限制，请稍后再试或更换网络。",
     "AUTH_COOKIE_INVALID": "Cookie 已失效，需要重新导入最新 Cookie。",
@@ -61,6 +72,7 @@ DEFAULT_ERROR_MESSAGES = {
 PLATFORM_ERROR_MESSAGES = {
     "YouTube": {
         "NETWORK_RATE_LIMIT": "YouTube 当前限制了这次请求，像是访问太频繁了，请稍后再试或换个网络环境。",
+        "YOUTUBE_HTTP_403": "YouTube 拒绝了当前媒体下载通道（HTTP 403），工具已自动尝试备用通道但仍未成功。",
         "DOWNLOAD_RANGE_INVALID": "这条 YouTube 视频的本地残留下载文件和服务器范围不一致，请重新下载这条视频。",
         "AUTH_BOT_CHECK": "YouTube 触发机器人验证，当前账号或 IP 环境被限制。工具已完成自动增强重试，请更换网络、降低频率，或重新导入 Cookie。",
         "AUTH_COOKIE_INVALID": "这份 YouTube Cookie 已失效，需要重新导出并导入。",
@@ -69,7 +81,7 @@ PLATFORM_ERROR_MESSAGES = {
         "PRIVATE_VIDEO": "这个 YouTube 视频是私密或受限内容，当前账号没有权限访问。",
         "NETWORK_ERROR": "连接 YouTube 失败了，请检查网络、代理或 VPN 后重试。",
         "NETWORK_TIMEOUT": "连接 YouTube 超时了，请稍后重试。",
-        "EXTRACTOR_FAILED": "YouTube 页面结构可能变了，常规解析失败，准备尝试 Deno 兜底。",
+        "EXTRACTOR_FAILED": "YouTube 页面结构可能变了，常规解析失败，准备尝试其他验证通道。",
     },
     "TikTok": {
         "NETWORK_RATE_LIMIT": "TikTok 当前限制了请求频率，请稍后再试，别连续点太快。",
@@ -267,6 +279,44 @@ def summarize_command_error(raw_stderr: str = "", raw_stdout: str = "", *, max_l
     return summary
 
 
+def detect_tool_update_notices(raw_stderr: str = "", raw_stdout: str = "") -> list[str]:
+    text = f"{raw_stderr or ''}\n{raw_stdout or ''}"
+    lowered = text.lower()
+    tools = []
+
+    if (
+        ("your yt-dlp version" in lowered and "older than" in lowered)
+        or "confirm you are on the latest version using yt-dlp -u" in lowered
+        or "please update to nightly" in lowered
+    ):
+        tools.append("yt-dlp")
+
+    if re.search(
+        r"(?:ffmpeg[^\r\n]*(?:too old|outdated|please update|unsupported version)|"
+        r"(?:too old|outdated|please update)[^\r\n]*ffmpeg)",
+        lowered,
+    ):
+        tools.append("FFmpeg")
+
+    if re.search(
+        r"(?:deno[^\r\n]*(?:too old|outdated|minimum required|unsupported version)|"
+        r"(?:too old|outdated|minimum required)[^\r\n]*deno)",
+        lowered,
+    ):
+        tools.append("Deno")
+
+    if (
+        ("bgutil" in lowered or "po token provider" in lowered)
+        and any(marker in lowered for marker in ("version mismatch", "outdated", "please update"))
+    ):
+        tools.append("BgUtils PO Token Provider")
+
+    return [
+        f"检测到 {tool} 版本过旧或不兼容，请更新后重试。官方下载：{TOOL_UPDATE_URLS[tool]}"
+        for tool in tools
+    ]
+
+
 def format_strategy_log(platform_name: str, strategy_name: str, message: str) -> str:
     strategy_label = STRATEGY_LOG_NAMES.get(strategy_name or "", strategy_name or "策略")
     return f"[{strategy_label}][{platform_name}] {message}"
@@ -383,6 +433,15 @@ def run_logged_download_strategy(
             cancel_checker=runtime.cancel_checker,
         )
         elapsed = time.time() - start_time
+        for update_notice in detect_tool_update_notices(
+            command_result.get("raw_stderr", ""),
+            command_result.get("raw_stdout", ""),
+        ):
+            log_callback(format_strategy_log(
+                downloader.platform_name,
+                strategy_name,
+                update_notice,
+            ))
         selected_format = command_result.get("selected_format")
         output_files = validate_output_files(
             command_result.get("output_files", []),

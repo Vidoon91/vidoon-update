@@ -268,7 +268,7 @@ class AboutPage(QWidget):
 
         text = f"yt-dlp: {'已安装' if yt_dlp_exists else '未安装'}<br>"
         text += f"FFmpeg: {'已安装' if ffmpeg_exists else '未安装'}<br>"
-        text += f"Deno.js 解析引擎: {'已就绪' if deno_exists else '未检测到'}<br>"
+        text += f"视频解析运行环境: {'已就绪' if deno_exists else '未检测到'}<br>"
         text += f"Cookie 文件: {'已配置' if cookie_exists else '未配置'}"
         return text
 
